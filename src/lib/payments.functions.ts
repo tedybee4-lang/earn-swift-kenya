@@ -43,7 +43,7 @@ export const initiateStkPush = createServerFn({ method: "POST" })
     const ref = `SMARTERN-${context.userId.slice(0, 8)}-${now}`;
     const payload = {
       amount,
-      phone_number: phone,
+      phone_number: `0${phone.slice(3)}`,
       channel_id: channelId,
       provider: "m-pesa",
       external_reference: ref,
@@ -83,14 +83,19 @@ export const initiateStkPush = createServerFn({ method: "POST" })
 
     if (!okRes) {
       const reason = String(d["message"] ?? resBody["message"] ?? resBody["error"] ?? `PayHero returned HTTP ${httpStatus || "error"}`);
-      const errorCode = String(resBody["error_code"] ?? "");
+      const errorCode = String(d["error_code"] ?? resBody["error_code"] ?? "");
+      const safeReason = reason.replace(/<[^>]*>/g, "").slice(0, 160);
       await db.from("stk_transactions").update({ status: "failed", failure_reason: reason, response_payload: resBody as never, updated_at: new Date().toISOString() }).eq("ref", ref);
       console.error("STK push failed", { httpStatus, response: resBody });
       return { success: false as const, error: errorCode === "LIMIT_REACHED"
         ? "M-Pesa prompts are temporarily unavailable because the payment service limit has been reached. Please use manual payment."
         : httpStatus === 401 || httpStatus === 403
         ? "PayHero rejected the payment connection. Please use manual payment while support checks it."
-        : "Couldn't send the M-Pesa prompt. Please try again or use manual payment." };
+        : httpStatus >= 400
+        ? `PayHero rejected the request (HTTP ${httpStatus}): ${safeReason}`
+        : httpStatus > 0
+        ? "PayHero did not return a checkout ID. Please verify the payment channel configuration."
+        : `Could not reach PayHero: ${safeReason}` };
     }
     await db.from("stk_transactions").update({ status: "pending", checkout_request_id: checkout ?? null, merchant_request_id: merchant ?? null, response_payload: resBody as never, updated_at: new Date().toISOString() }).eq("ref", ref);
     await sendSms(db, { phone, userId: context.userId, trigger: "stk_sent", dedupeKey: `stk_sent:${ref}`,
