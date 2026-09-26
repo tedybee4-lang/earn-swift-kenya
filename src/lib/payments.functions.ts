@@ -82,9 +82,12 @@ export const initiateStkPush = createServerFn({ method: "POST" })
     okRes = okRes && Boolean(checkout);
 
     if (!okRes) {
-      const reason = String(d["message"] ?? resBody["message"] ?? resBody["error"] ?? `PayHero returned HTTP ${httpStatus || "error"}`);
+      const reason = [d["message"], d["error"], d["errors"], d["error_description"], resBody["message"], resBody["error"], resBody["errors"], resBody["raw"]]
+        .map((value) => typeof value === "string" ? value : value == null ? undefined : JSON.stringify(value))
+        .find((value) => Boolean(value?.trim())) ?? `PayHero returned HTTP ${httpStatus || "error"}`;
       const errorCode = String(d["error_code"] ?? resBody["error_code"] ?? "");
-      const safeReason = reason.replace(/<[^>]*>/g, "").slice(0, 160);
+      const cleanReason = reason.replace(/<[^>]*>/g, " ").replace(/\s+/g, " ");
+      const safeReason = (token ? cleanReason.split(token).join("[redacted]") : cleanReason).slice(0, 180);
       await db.from("stk_transactions").update({ status: "failed", failure_reason: reason, response_payload: resBody as never, updated_at: new Date().toISOString() }).eq("ref", ref);
       console.error("STK push failed", { httpStatus, response: resBody });
       return { success: false as const, error: errorCode === "LIMIT_REACHED"
