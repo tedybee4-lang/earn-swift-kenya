@@ -1,6 +1,17 @@
 [build]
   command = "npm run build"
+  # Nitro's "netlify" preset writes static assets to dist/ (not dist/client).
+  # Setting this here overrides any stale "dist/client" publish directory
+  # configured in the Netlify UI, which otherwise causes
+  # "The deploy directory ... has not been found" during onPostBuild.
+  publish = "dist"
 
 [build.environment]
   NITRO_PRESET = "netlify"
   NODE_VERSION = "22"
+  # These Supabase values are publishable/anon keys, protected by Supabase Row
+  # Level Security, and are intentionally embedded in the client bundle by
+  # Vite. They are not secrets, so exclude them from secrets scanning to
+  # avoid false positives. Do NOT add SUPABASE_SERVICE_ROLE_KEY, PAYHERO_AUTH_TOKEN,
+  # or SMS_API_TOKEN here — those must remain server-only secrets.
+  SECRETS_SCAN_OMIT_KEYS = "SUPABASE_URL,SUPABASE_PUBLISHABLE_KEY,SUPABASE_PROJECT_ID,VITE_SUPABASE_URL,VITE_SUPABASE_PUBLISHABLE_KEY,VITE_SUPABASE_PROJECT_ID"
