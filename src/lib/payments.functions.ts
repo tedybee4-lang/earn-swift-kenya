@@ -82,9 +82,10 @@ export const initiateStkPush = createServerFn({ method: "POST" })
     okRes = okRes && Boolean(checkout);
 
     if (!okRes) {
-      const reason = [d["message"], d["error"], d["errors"], d["error_description"], resBody["message"], resBody["error"], resBody["errors"], resBody["raw"]]
+      const responseSummary = JSON.stringify(resBody);
+      const reason = [d["message"], d["error"], d["errors"], d["detail"], d["details"], d["error_description"], d["error_message"], d["validation_errors"], d["ResultDesc"], d["result_desc"], resBody["message"], resBody["error"], resBody["errors"], resBody["detail"], resBody["details"], resBody["error_description"], resBody["ResultDesc"], resBody["result_desc"], resBody["raw"]]
         .map((value) => typeof value === "string" ? value : value == null ? undefined : JSON.stringify(value))
-        .find((value) => Boolean(value?.trim())) ?? `PayHero returned HTTP ${httpStatus || "error"}`;
+        .find((value) => Boolean(value?.trim())) ?? (responseSummary && responseSummary !== "{}" ? responseSummary : `PayHero returned HTTP ${httpStatus || "error"}`);
       const errorCode = String(d["error_code"] ?? resBody["error_code"] ?? "");
       const cleanReason = reason.replace(/<[^>]*>/g, " ").replace(/\s+/g, " ");
       const safeReason = (token ? cleanReason.split(token).join("[redacted]") : cleanReason).slice(0, 180);
