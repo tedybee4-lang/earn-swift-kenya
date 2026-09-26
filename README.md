@@ -248,7 +248,7 @@ SYSTEM REQUIREMENTS
 
 - Add SMS provider status/error logs to the admin dashboard.ADDON: AUTOMATED M-PESA STK PUSH FOR SMARTEARN
 
-This payment integration uses automated PayHero STK Push. A provider-verified payment creates an admin approval request; account activation and referral commissions happen only after an admin approves it. Keep all existing SmartEarn features.
+This payment integration uses automated PayHero STK Push. Once PayHero confirms payment, the callback verifies the transaction and activates the account automatically, including any referral commission. Users complete 3 free tasks before activation payment.
 
 PAYMENT GATEWAY
 Provider: PayHero
@@ -260,7 +260,7 @@ CALLBACK:
 https://YOUR-DOMAIN/api/public/mpesa-callback
 
 PAYMENT FLOW
-User selects Starter=KSh200, Standard=KSh350, Pro=KSh550. Phone is prefilled and normalized. The server sends the PayHero STK request; the user enters their PIN; the callback is cross-checked against PayHero's authenticated transaction-status API and matched against reference, amount, phone and M-Pesa receipt. A payment approval request is then created for admin review. Only admin approval activates the account and credits any referral commission.
+Users complete 3 free tasks before choosing Starter=KSh200, Standard=KSh350 or Pro=KSh550. The server sends the PayHero STK request; the user enters their PIN; the callback is cross-checked against PayHero's authenticated transaction-status API and matched against reference, amount, phone and M-Pesa receipt. A verified payment automatically activates the account and credits any referral commission.
 
 DATABASE
 Add to payments:
@@ -286,7 +286,7 @@ Receive the PayHero callback. Parse response fields including CheckoutRequestID,
 
 If ResultCode=0:
 
-Create a payment approval request. Admin reviews the request in the Payments tab. Approval activates the user and processes the referral commission; activation and referrer SMS messages are sent after approval.
+Call the atomic `activate_stk` function. This activates the user, sets the paid tier, applies any referral commission exactly once, and returns the activation data used for SMS notifications.
 
 If failed/cancelled, update status and send the appropriate failure/cancellation SMS.
 
@@ -302,7 +302,7 @@ Pro KSh550 → 4x
 M-Pesa Number [prefilled]
 [ PAY KSH {amount} → M-PESA ]
 
-After click: "Sending STK Push..." Poll check-payment-status every 3 seconds. Verified payment → show that the activation request is under review, then return to /dashboard. Failure → retry. After 2 minutes show "Did you receive the prompt?" Prevent duplicate requests.
+After click, show a waiting screen asking the user to approve the prompt on their phone while polling payment status every 3 seconds. Verified payment → show a success screen confirming automatic account activation, then return to /dashboard. Failure → retry. Prevent duplicate requests.
 
 check-payment-status
 File: supabase/functions/check-payment-status/index.ts
@@ -346,7 +346,7 @@ BUILD ORDER
 Database → initiate-stk-push → callback → status check → secrets → callback registration → activation UI → SMS → admin page → manual fallback → small-value real test → production.
 
 TEST
-Test successful payment, approval request, admin approval/activation, user and referrer SMS, rejection, cancellation, failure, duplicate callback, invalid callback, wrong amount, unknown ref, idempotency, polling fallback, manual mode, admin visibility, CSV and retry limits.
+Test the 3-free-task gate, successful payment and automatic activation, user/referrer SMS, cancellation, failure, duplicate callback, invalid callback, wrong amount, unknown ref, idempotency, polling fallback, manual mode, admin visibility, CSV and retry limits.
 
 IMPORTANT
 Verify the live PayHero API and complete a low-value end-to-end test before production. The callback is checked against PayHero's transaction-status endpoint before a payment is recorded.

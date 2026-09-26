@@ -46,7 +46,17 @@ function Dashboard() {
     queryFn: async () =>
       (await supabase.from("task_completions").select("id,reward,status,created_at,tasks(title)").eq("user_id", user.id).order("created_at", { ascending: false }).limit(10)).data ?? [],
   });
+  const taskProgress = useQuery({
+    queryKey: ["task-count", user.id],
+    queryFn: async () => {
+      const { count, error } = await supabase.from("task_completions").select("id", { count: "exact", head: true }).eq("user_id", user.id);
+      if (error) throw error;
+      return count ?? 0;
+    },
+  });
   const p = profile.data;
+  const completedTasks = taskProgress.data ?? 0;
+  const freeTasksRemaining = Math.max(0, 3 - completedTasks);
   const tasks = useActiveTasks();
   const refs = useQuery({ queryKey: ["refs", user.id], queryFn: async () => (await supabase.rpc("my_referrals")).data ?? [] });
   const wds = useQuery({ queryKey: ["wds", user.id], queryFn: async () => (await supabase.from("withdrawals").select("*").eq("user_id", user.id).order("created_at", { ascending: false }).limit(10)).data ?? [] });
@@ -114,15 +124,18 @@ function Dashboard() {
 
         <div className="grid grid-cols-3 gap-3">
           <Stat icon={Flame} label="Streak" value={`${p?.streak ?? 0} days`} />
-          <Stat icon={Wallet} label="Tasks done" value={String(history.data?.length ?? 0)} />
+          <Stat icon={Wallet} label="Tasks done" value={String(completedTasks)} />
           <Stat icon={Users} label="Your code" value={p?.referral_code ?? "—"} copy />
         </div>
 
         {p?.status !== "active" && (
           <div className="card border-primary/30 p-5">
-            <p className="font-semibold">Activate your account</p>
-            <p className="mt-1 text-sm text-muted-foreground">You get 3 free tasks. Activation unlocks 4 tasks a day, higher rewards and withdrawals.</p>
-            <Link to="/dashboard/activate" className="btn-primary mt-3 w-full">Activate with M-Pesa</Link>
+            <div className="flex items-start justify-between gap-4">
+              <div><p className="font-semibold">{freeTasksRemaining ? "Your free tasks" : "Free tasks complete"}</p><p className="mt-1 text-sm text-muted-foreground">{freeTasksRemaining ? `Complete ${freeTasksRemaining} more free task${freeTasksRemaining === 1 ? "" : "s"} before activation payment.` : "Your 3 free tasks are complete. Activate to unlock daily earning and withdrawals."}</p></div>
+              <span className="chip shrink-0 bg-primary/10 text-primary">{Math.min(completedTasks, 3)}/3</span>
+            </div>
+            <div className="mt-4 h-2 overflow-hidden rounded-full bg-muted"><div className="h-full rounded-full bg-success transition-[width]" style={{ width: `${Math.min(completedTasks, 3) / 3 * 100}%` }} /></div>
+            {freeTasksRemaining === 0 && <Link to="/dashboard/activate" className="btn-primary mt-4 w-full">Continue with M-Pesa</Link>}
           </div>
         )}
 
@@ -138,7 +151,7 @@ function Dashboard() {
                   {msg?.id === t.id && <p className={`mt-1 text-xs ${msg.ok ? "text-success" : "text-destructive"}`}>{msg.text}</p>}
                 </div>
                 <div className="flex shrink-0 flex-col gap-2">
-                  <button onClick={() => { setOpen({ id: t.id, title: t.title, url: t.action_url, instructions: t.instructions ?? null, mins: t.est_minutes }); setLeft(Math.min(60, Math.max(15, t.est_minutes * 60))); }} className="btn-primary px-3 py-1 text-xs">Start</button>
+                  <button disabled={p?.status !== "active" && freeTasksRemaining === 0} onClick={() => { setOpen({ id: t.id, title: t.title, url: t.action_url, instructions: t.instructions ?? null, mins: t.est_minutes }); setLeft(Math.min(60, Math.max(15, t.est_minutes * 60))); }} className="btn-primary px-3 py-1 text-xs">{p?.status !== "active" && freeTasksRemaining === 0 ? "Activate" : "Start"}</button>
                 </div>
               </div>
             ))}

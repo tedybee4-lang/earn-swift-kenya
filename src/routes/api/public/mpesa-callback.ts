@@ -71,28 +71,19 @@ export const Route = createFileRoute("/api/public/mpesa-callback")({
             console.warn("PayHero callback does not match verified transaction status", { ref: t.ref, status: verifiedPayment["status"] });
             return Response.json({ ok: false, reason: "verification_mismatch" }, { status: 503 });
           }
-          const { error: approvalError } = await db.rpc("create_payment_approval_request", {
-            _user_id: t.user_id,
-            _stk_transaction_id: t.id,
-            _phone: t.phone,
+          const { data: activated, error: activationError } = await db.rpc("activate_stk", {
+            _ref: t.ref,
+            _txid: p.txid,
             _amount: p.amount,
-            _tier: t.tier,
-            _payment_reference: t.ref,
+            _payload: body as never,
+            _actor: "payhero_callback",
           });
-          if (approvalError && !approvalError.message.toLowerCase().includes("already exists")) {
-            console.error("Could not create payment approval request", { ref: t.ref, error: approvalError.message });
-            return Response.json({ ok: false }, { status: 500 });
+          if (activationError || !activated || typeof activated !== "object" || !("ok" in activated) || activated["ok"] !== true) {
+            console.error("Could not activate verified PayHero payment", { ref: t.ref, error: activationError?.message, result: activated });
+            return Response.json({ ok: false, reason: "activation_failed" }, { status: 500 });
           }
-          const { error: updateError } = await db.from("stk_transactions").update({
-            status: "success",
-            transaction_id: p.txid,
-            callback_payload: body as never,
-            updated_at: new Date().toISOString(),
-          }).eq("id", t.id);
-          if (updateError) {
-            console.error("Could not record PayHero payment", { ref: t.ref, error: updateError.message });
-            return Response.json({ ok: false }, { status: 500 });
-          }
+          const { notifyActivation } = await import("@/lib/activation.server");
+          await notifyActivation(db, activated as Record<string, unknown>);
           return Response.json({ ok: true });
         }
 

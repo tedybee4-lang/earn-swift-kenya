@@ -28,6 +28,12 @@ export const initiateStkPush = createServerFn({ method: "POST" })
     if (!user) return { success: false as const, error: "Account not found." };
     if (user.status === "active") return { success: false as const, error: "Your account is already active." };
     if (user.status === "suspended") return { success: false as const, error: "Account suspended." };
+    const { count: completedTasks, error: taskCountError } = await db.from("task_completions").select("id", { count: "exact", head: true }).eq("user_id", context.userId);
+    if (taskCountError) {
+      console.error("Could not verify free task eligibility", { userId: context.userId, error: taskCountError.message });
+      return { success: false as const, error: "We couldn't verify your free-task progress. Please refresh and try again." };
+    }
+    if ((completedTasks ?? 0) < 3) return { success: false as const, error: `Complete your ${3 - (completedTasks ?? 0)} remaining free task${3 - (completedTasks ?? 0) === 1 ? "" : "s"} before activation payment.` };
 
     const now = Date.now();
     const { data: recent } = await db.from("stk_transactions").select("id,status,created_at,phone,user_id")
@@ -118,7 +124,7 @@ export const checkPaymentStatus = createServerFn({ method: "POST" })
       await db.from("stk_transactions").update({ status: "failed", failure_reason: "timeout", updated_at: new Date().toISOString() }).eq("id", t.id).in("status", ["initiated", "pending"]);
       return { status: "failed", tier: t.tier, transaction_id: null, message: "The prompt expired. Please try again." };
     }
-    const msg: Record<string, string> = { success: "Payment received. Your activation request is under review.", failed: t.failure_reason ?? "Payment failed.", cancelled: "Payment was cancelled.", pending: "Waiting for payment confirmation.", initiated: "STK prompt sent." };
+    const msg: Record<string, string> = { success: "Payment confirmed. Your account is approved and active.", failed: t.failure_reason ?? "Payment failed.", cancelled: "Payment was cancelled.", pending: "Waiting for payment confirmation.", initiated: "STK prompt sent." };
     return { status: t.status, tier: t.tier, transaction_id: t.transaction_id, message: msg[t.status] ?? t.status };
   });
 

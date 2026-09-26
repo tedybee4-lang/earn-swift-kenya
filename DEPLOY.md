@@ -13,7 +13,7 @@ Your project details (already filled in):
 | Piece | Where it lives |
 | --- | --- |
 | Tables, enums, RLS, grants | `supabase/setup.sql` |
-| DB functions: `has_role`, `complete_task` (instant rewards), `activate_stk` (activation + tier + referral commission), `recent_activity`, `handle_new_user` | `supabase/setup.sql` |
+| DB functions: `has_role`, `complete_task` (3 free tasks; 4 daily after activation), `activate_stk` (automatic activation + referral commission), `recent_activity`, `handle_new_user` | `supabase/setup.sql` plus migrations |
 | Trigger `on_auth_user_created` | `supabase/setup.sql` |
 | Realtime on `tasks` | `supabase/setup.sql` |
 | Payment request (PayHero STK) | server function `src/lib/payments.functions.ts` (runs on Vercel) |
@@ -26,17 +26,18 @@ Your project details (already filled in):
 
 ## 1. Supabase setup
 1. SQL Editor -> paste `supabase/setup.sql` -> Run. (You said you already did this.)
-2. If not already applied, run `supabase/migrations/0007_payment_approval_notifications_withdrawal.sql` after `setup.sql`; then run `supabase/migrations/0008_admin_payment_approval_access.sql` to enable role-checked admin approval actions.
-3. Authentication -> Providers -> Email: enabled; turn OFF "Confirm email"
+2. If not already applied, run migrations `0007_payment_approval_notifications_withdrawal.sql` and `0008_admin_payment_approval_access.sql` after `setup.sql`.
+3. Run `supabase/migrations/0009_auto_activate_payhero_and_free_tasks.sql` to automatically activate verified PayHero payments and enforce the three-free-task limit. It also activates verified PayHero payments left pending in the old approval queue.
+4. Authentication -> Providers -> Email: enabled; turn OFF "Confirm email"
    (members sign in with phone numbers mapped to internal emails).
-4. Authentication -> URL Configuration -> Site URL = `https://smarttearnn.vercel.app`.
-5. Create the admin: sign up in the app with your admin phone, then in SQL Editor:
+5. Authentication -> URL Configuration -> Site URL = `https://smarttearnn.vercel.app`.
+6. Create the admin: sign up in the app with your admin phone, then in SQL Editor:
    ```sql
    insert into public.user_roles (user_id, role)
    select id, 'admin' from public.profiles where phone = '254713824135';
    update public.profiles set status = 'active' where phone = '254713824135';
    ```
-6. Add your live tasks from the admin dashboard (each needs an https link).
+7. Add your live tasks from the admin dashboard (each needs an https link).
 
 ## 2. Vercel environment variables
 Vercel -> Project -> Settings -> Environment Variables (enable Production):

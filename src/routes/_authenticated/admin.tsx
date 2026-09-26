@@ -1,7 +1,7 @@
 import { createFileRoute, redirect, useNavigate } from "@tanstack/react-router";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useState } from "react";
-import { LogOut } from "lucide-react";
+import { Activity, CreditCard, LayoutDashboard, ListTodo, LogOut, MessageSquareText, UsersRound, WalletCards } from "lucide-react";
 import { supabase } from "@/integrations/supabase/client";
 import { getMyRole } from "@/lib/auth";
 import { useServerFn } from "@tanstack/react-start";
@@ -25,33 +25,59 @@ export const Route = createFileRoute("/_authenticated/admin")({
   component: Admin,
 });
 
-const tabs = ["Overview", "Tasks", "Users", "Payments", "Withdrawals", "SMS"] as const;
+const tabs = [
+  { id: "Overview", icon: LayoutDashboard },
+  { id: "Tasks", icon: ListTodo },
+  { id: "Users", icon: UsersRound },
+  { id: "Payments", icon: CreditCard },
+  { id: "Withdrawals", icon: WalletCards },
+  { id: "SMS", icon: MessageSquareText },
+] as const;
+type AdminTab = (typeof tabs)[number]["id"];
 
 function Admin() {
-  const [tab, setTab] = useState<(typeof tabs)[number]>("Overview");
+  const [tab, setTab] = useState<AdminTab>("Overview");
   const nav = useNavigate();
   const qc = useQueryClient();
   return (
-    <div className="min-h-screen">
-      <header className="bg-navy-gradient text-navy-foreground">
-        <div className="mx-auto flex h-16 max-w-6xl items-center justify-between px-4">
-          <div className="flex items-center gap-3"><Logo light /><span className="chip bg-accent/30">Admin</span></div>
-          <button onClick={async () => { await supabase.auth.signOut(); qc.clear(); nav({ to: "/login" }); }} className="btn px-3 py-2 hover:bg-navy-foreground/10"><LogOut className="h-4 w-4" /></button>
+    <div className="min-h-screen bg-[#f3f6f4] text-slate-900 lg:grid lg:grid-cols-[248px_minmax(0,1fr)]">
+      <aside className="border-b border-emerald-950/10 bg-[#123a36] text-white lg:sticky lg:top-0 lg:flex lg:h-screen lg:flex-col lg:border-b-0">
+        <div className="flex h-16 items-center justify-between px-4 lg:h-20 lg:px-5">
+          <div className="flex items-center gap-3"><Logo light /><span className="rounded-md border border-white/20 px-2 py-1 text-[10px] font-semibold uppercase tracking-wide text-white/75">Admin</span></div>
+          <button onClick={async () => { await supabase.auth.signOut(); qc.clear(); nav({ to: "/login" }); }} className="grid h-9 w-9 place-items-center rounded-lg text-white/75 transition hover:bg-white/10 hover:text-white lg:hidden" aria-label="Log out"><LogOut className="h-4 w-4" /></button>
         </div>
-        <nav className="mx-auto flex max-w-6xl gap-1 overflow-x-auto px-4">
-          {tabs.map((t) => (
-            <button key={t} onClick={() => setTab(t)} className={`border-b-2 px-4 py-3 text-sm font-medium ${tab === t ? "border-electric" : "border-transparent opacity-60"}`}>{t}</button>
+        <nav aria-label="Admin sections" className="flex gap-1 overflow-x-auto px-3 pb-3 lg:flex-1 lg:flex-col lg:overflow-visible lg:py-5">
+          {tabs.map(({ id, icon: Icon }) => (
+            <button key={id} onClick={() => setTab(id)} aria-current={tab === id ? "page" : undefined} className={`flex shrink-0 items-center gap-3 rounded-lg px-3 py-2.5 text-sm font-medium transition lg:w-full ${tab === id ? "bg-white text-[#123a36] shadow-sm" : "text-white/75 hover:bg-white/10 hover:text-white"}`}>
+              <Icon className="h-4 w-4" />{id}
+            </button>
           ))}
         </nav>
-      </header>
-      <main className="mx-auto max-w-6xl px-4 py-6">
+        <div className="hidden p-4 lg:block">
+          <div className="rounded-xl border border-white/10 bg-white/5 p-3">
+            <div className="flex items-center gap-2 text-xs font-medium text-white/80"><span className="live-dot h-2 w-2 rounded-full bg-emerald-300" /> Operations online</div>
+            <p className="mt-2 text-[11px] text-white/45">SmartEarn control room</p>
+          </div>
+        </div>
+      </aside>
+      <div className="min-w-0">
+        <header className="sticky top-0 z-10 flex min-h-20 items-center justify-between border-b border-slate-200/80 bg-white/90 px-4 backdrop-blur md:px-7">
+          <div><p className="text-[11px] font-semibold uppercase tracking-wide text-emerald-800/70">SmartEarn / Admin</p><h1 className="mt-0.5 text-xl font-bold">{tab}</h1></div>
+          <div className="flex items-center gap-3">
+            <span className="hidden items-center gap-2 rounded-full bg-emerald-50 px-3 py-1.5 text-xs font-medium text-emerald-800 sm:inline-flex"><Activity className="h-3.5 w-3.5" /> Live operations</span>
+            <button onClick={async () => { await supabase.auth.signOut(); qc.clear(); nav({ to: "/login" }); }} className="btn-outline h-9 px-3 py-2" aria-label="Log out"><LogOut className="h-4 w-4" /><span className="hidden sm:inline">Log out</span></button>
+          </div>
+        </header>
+        <main className="mx-auto max-w-[1440px] space-y-6 px-4 py-6 md:px-7 md:py-8">
+          <p className="text-sm text-muted-foreground">{tab === "Overview" ? "A live view of members, tasks, and reviews." : `Manage SmartEarn ${tab.toLowerCase()} from one place.`}</p>
         {tab === "Overview" && <Overview />}
         {tab === "Tasks" && <TasksAdmin />}
         {tab === "Users" && <UsersAdmin />}
         {tab === "Payments" && <StkAdmin />}
         {tab === "SMS" && <SmsAdmin />}
         {tab === "Withdrawals" && <WithdrawalsAdmin />}
-      </main>
+        </main>
+      </div>
     </div>
   );
 }
@@ -70,11 +96,19 @@ function Overview() {
       return { users, active, tasks, pending };
     },
   });
-  const items = [["Total users", data?.users], ["Active users", data?.active], ["Live tasks", data?.tasks], ["Tasks awaiting review", data?.pending]];
+  const items = [
+    { label: "Total users", value: data?.users, icon: UsersRound, tone: "bg-sky-50 text-sky-700" },
+    { label: "Active users", value: data?.active, icon: Activity, tone: "bg-emerald-50 text-emerald-700" },
+    { label: "Live tasks", value: data?.tasks, icon: ListTodo, tone: "bg-amber-50 text-amber-700" },
+    { label: "Tasks awaiting review", value: data?.pending, icon: CreditCard, tone: "bg-rose-50 text-rose-700" },
+  ];
   return (
     <div className="grid grid-cols-2 gap-4 md:grid-cols-4">
-      {items.map(([k, v]) => (
-        <div key={k as string} className="card p-5"><p className="text-sm text-muted-foreground">{k}</p><p className="mt-1 font-display text-3xl font-bold">{v ?? "…"}</p></div>
+      {items.map(({ label, value, icon: Icon, tone }) => (
+        <article key={label} className="rounded-xl border border-slate-200/80 bg-white p-5 shadow-sm">
+          <div className="flex items-center justify-between gap-2"><p className="text-sm text-muted-foreground">{label}</p><span className={`grid h-9 w-9 place-items-center rounded-lg ${tone}`}><Icon className="h-4 w-4" /></span></div>
+          <p className="mt-4 font-display text-3xl font-bold tabular-nums">{value ?? "…"}</p>
+        </article>
       ))}
     </div>
   );
@@ -305,13 +339,13 @@ function StkAdmin() {
   return (
     <div className="space-y-4">
       <section className="card overflow-hidden">
-        <div className="border-b p-4"><h2 className="font-semibold">Payment approvals</h2><p className="mt-1 text-xs text-muted-foreground">Verified PayHero payments awaiting activation review.</p></div>
+        <div className="border-b p-4"><h2 className="font-semibold">Legacy payment exceptions</h2><p className="mt-1 text-xs text-muted-foreground">Older verified payments awaiting manual resolution. New PayHero payments activate automatically.</p></div>
         {approvals?.length ? approvals.map((approval) => (
           <div key={approval.id} className="flex flex-wrap items-center justify-between gap-3 border-b p-4 text-sm last:border-0">
             <div><p className="font-medium">{approval.phone} · {ksh(approval.amount)} · {approval.tier}</p><p className="text-xs text-muted-foreground">{approval.payment_reference} · {new Date(approval.requested_at).toLocaleString()}</p></div>
             <div className="flex gap-2"><button onClick={() => reviewPayment(approval.id, "approve")} className="btn-primary px-3 py-1">Approve &amp; activate</button><button onClick={() => reviewPayment(approval.id, "reject")} className="btn-outline px-3 py-1">Reject</button></div>
           </div>
-        )) : <p className="p-4 text-sm text-muted-foreground">No payments are awaiting approval.</p>}
+        )) : <p className="p-4 text-sm text-muted-foreground">No legacy payment exceptions.</p>}
       </section>
       <div className="grid grid-cols-2 gap-3 md:grid-cols-4">
         {[["Pushes today", t.length], ["Success rate", t.length ? `${Math.round((ok.length / t.length) * 100)}%` : "—"], ["Revenue today", ksh(ok.reduce((a, x) => a + Number(x.amount), 0))], ["Failures today", t.filter((x) => ["failed", "cancelled"].includes(x.status)).length]].map(([k, v]) => (
