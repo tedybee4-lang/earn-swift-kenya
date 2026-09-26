@@ -9,7 +9,8 @@
 
 ## Phase 2 — payments (connected, needs a small real test)
 - [x] stk_transactions + payments tables, initiate STK push, callback, status polling
-- [x] Corrected SmartPay host to the documented SmartPay Pesa API and added request timeout/error handling
+- [x] PayHero STK Push request, callback validation, and authenticated transaction-status verification
+- [x] Payment approval queue with admin approve/reject actions and SMS notifications
 - [x] /dashboard/activate page + manual Till 5441898 fallback
 - [x] Referral commissions (80/150/250), admin STK transactions page + CSV
 
@@ -30,9 +31,9 @@
 - [x] Generic sample tasks paused; only tasks with a verified HTTPS destination can now be made live
 - Add sponsor-provided task links and instructions through Admin before publishing tasks
 - Support contact details for Help page
-- Confirm SmartPay callback URL registered in SmartPay dashboard: https://project--7135d1a6-507a-47ce-b4c8-2f404af01cf0.lovable.app/api/public/mpesa-callback
-- SmartPay currently returns `LIMIT_REACHED`; the provider account must be funded or its API allowance renewed before live prompts can succeed
+- Register the PayHero callback URL in the payment channel settings: https://smarttearnn.vercel.app/api/public/mpesa-callback
+- Run the payment approval migrations in Supabase and complete a low-value end-to-end test
 
 ## Migration to own Supabase (2026-09-24)
 - User Supabase: exisbpugnwmhclnjpqru.supabase.co; Vercel: smarttearnn.vercel.app; values wired into .env.example + DEPLOY.md
-- User must still: add SUPABASE_SERVICE_ROLE_KEY + new SMARTPAY_API_KEY + new SMS_API_TOKEN in Vercel; set SmartPay callback to https://smarttearnn.vercel.app/api/public/mpesa-callback; turn off Confirm email; create admin via SQL; redeploy; test small payment + SMS
+- User must still: add SUPABASE_SERVICE_ROLE_KEY + PAYHERO_AUTH_TOKEN + PAYHERO_CHANNEL_ID + SMS_API_TOKEN in Vercel; register the PayHero callback; apply migrations 0007 and 0008 if needed; turn off Confirm email; create admin via SQL; redeploy; test a small payment and SMS

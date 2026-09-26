@@ -5,7 +5,7 @@ import { LogOut } from "lucide-react";
 import { supabase } from "@/integrations/supabase/client";
 import { getMyRole } from "@/lib/auth";
 import { useServerFn } from "@tanstack/react-start";
-import { adminSendTestSms, adminManualActivate, adminDeleteUser, adminGetSmsKey, adminSetSmsKey } from "@/lib/payments.functions";
+import { adminSendTestSms, adminManualActivate, adminApprovePayment, adminRejectPayment, adminDeleteUser, adminGetSmsKey, adminSetSmsKey } from "@/lib/payments.functions";
 import { ksh } from "@/lib/phone";
 import { Logo } from "@/components/site/Logo";
 
@@ -265,7 +265,12 @@ function WithdrawalsAdmin() {
 function StkAdmin() {
   const qc = useQueryClient();
   const activate = useServerFn(adminManualActivate);
+  const approve = useServerFn(adminApprovePayment);
+  const reject = useServerFn(adminRejectPayment);
   const [status, setStatus] = useState("");
+  const { data: approvals } = useQuery({ queryKey: ["payment-approvals"], refetchInterval: 15000, queryFn: async () =>
+    (await supabase.from("payment_approval_requests").select("*").eq("status", "pending").order("requested_at", { ascending: true })).data ?? []
+  });
   const { data } = useQuery({ queryKey: ["stk", status], queryFn: async () => {
     let q = supabase.from("stk_transactions").select("*, profiles(name)").order("created_at", { ascending: false }).limit(200);
     if (status) q = q.eq("status", status);
@@ -279,8 +284,35 @@ function StkAdmin() {
     const url = URL.createObjectURL(new Blob([rows.map((r) => r.join(",")).join("\n")], { type: "text/csv" }));
     Object.assign(document.createElement("a"), { href: url, download: "stk-transactions.csv" }).click();
   }
+  async function reviewPayment(approvalId: string, action: "approve" | "reject") {
+    let reason = "";
+    if (action === "approve" && !confirm("Approve this verified payment and activate the account?")) return;
+    if (action === "reject") {
+      const response = prompt("Reason for rejection. Any refund must be handled separately.");
+      if (!response?.trim()) return;
+      reason = response.trim();
+    }
+    try {
+      if (action === "approve") await approve({ data: { approvalId } });
+      else await reject({ data: { approvalId, reason } });
+      qc.invalidateQueries({ queryKey: ["payment-approvals"] });
+      qc.invalidateQueries({ queryKey: ["stk"] });
+      qc.invalidateQueries({ queryKey: ["admin-stats"] });
+    } catch (error) {
+      alert(error instanceof Error ? error.message : "Could not process the payment approval.");
+    }
+  }
   return (
     <div className="space-y-4">
+      <section className="card overflow-hidden">
+        <div className="border-b p-4"><h2 className="font-semibold">Payment approvals</h2><p className="mt-1 text-xs text-muted-foreground">Verified PayHero payments awaiting activation review.</p></div>
+        {approvals?.length ? approvals.map((approval) => (
+          <div key={approval.id} className="flex flex-wrap items-center justify-between gap-3 border-b p-4 text-sm last:border-0">
+            <div><p className="font-medium">{approval.phone} · {ksh(approval.amount)} · {approval.tier}</p><p className="text-xs text-muted-foreground">{approval.payment_reference} · {new Date(approval.requested_at).toLocaleString()}</p></div>
+            <div className="flex gap-2"><button onClick={() => reviewPayment(approval.id, "approve")} className="btn-primary px-3 py-1">Approve &amp; activate</button><button onClick={() => reviewPayment(approval.id, "reject")} className="btn-outline px-3 py-1">Reject</button></div>
+          </div>
+        )) : <p className="p-4 text-sm text-muted-foreground">No payments are awaiting approval.</p>}
+      </section>
       <div className="grid grid-cols-2 gap-3 md:grid-cols-4">
         {[["Pushes today", t.length], ["Success rate", t.length ? `${Math.round((ok.length / t.length) * 100)}%` : "—"], ["Revenue today", ksh(ok.reduce((a, x) => a + Number(x.amount), 0))], ["Failures today", t.filter((x) => ["failed", "cancelled"].includes(x.status)).length]].map(([k, v]) => (
           <div key={k as string} className="card p-4"><p className="text-xs text-muted-foreground">{k}</p><p className="font-display text-2xl font-bold">{v}</p></div>

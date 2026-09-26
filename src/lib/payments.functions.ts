@@ -1,6 +1,7 @@
 import { createServerFn } from "@tanstack/react-start";
 import { z } from "zod";
 import { requireSupabaseAuth } from "@/integrations/supabase/auth-middleware";
+import { SITE_URL } from "@/lib/site";
 import { normalizePhone } from "./phone";
 
 const TIER_AMOUNT = { starter: 200, standard: 350, pro: 550 } as const;
@@ -9,10 +10,14 @@ export const initiateStkPush = createServerFn({ method: "POST" })
   .middleware([requireSupabaseAuth])
   .inputValidator((d) => z.object({ tier: z.enum(["starter", "standard", "pro"]), phone: z.string().min(9).max(16) }).parse(d))
   .handler(async ({ data, context }) => {
-    const missing = ["SUPABASE_URL", "SUPABASE_SERVICE_ROLE_KEY", "SMARTPAY_API_KEY"].filter((k) => !process.env[k]);
+    const missing = ["SUPABASE_URL", "SUPABASE_SERVICE_ROLE_KEY", "PAYHERO_AUTH_TOKEN", "PAYHERO_CHANNEL_ID"].filter((k) => !process.env[k]);
     if (missing.length) {
       console.error("Payment config missing", missing);
       return { success: false as const, error: `Payments are not configured on this server. Missing setting(s): ${missing.join(", ")}. Please use manual payment.` };
+    }
+    const channelId = Number(process.env["PAYHERO_CHANNEL_ID"]);
+    if (!Number.isInteger(channelId) || channelId < 1) {
+      return { success: false as const, error: "PayHero payment channel is not configured correctly. Please use manual payment." };
     }
     const { supabaseAdmin: db } = await import("@/integrations/supabase/client.server");
     const { sendSms } = await import("./sms.server");
@@ -36,21 +41,29 @@ export const initiateStkPush = createServerFn({ method: "POST" })
 
     const amount = TIER_AMOUNT[data.tier];
     const ref = `SMARTERN-${context.userId.slice(0, 8)}-${now}`;
-    const payload = { phone, amount, account_reference: ref, description: "SmartEarn Activation" };
+    const payload = {
+      amount,
+      phone_number: phone,
+      channel_id: channelId,
+      provider: "m-pesa",
+      external_reference: ref,
+      customer_name: user.name,
+      callback_url: process.env["PAYHERO_CALLBACK_URL"] || `${SITE_URL}/api/public/mpesa-callback`,
+    };
     await db.from("stk_transactions").insert({ user_id: context.userId, phone, amount, tier: data.tier, ref, request_payload: payload });
 
-    const key = (process.env["SMARTPAY_API_KEY"] ?? "").trim();
-    const endpoint = process.env["SMARTPAY_STK_ENDPOINT"] || "https://api.smartpaypesa.com/v1/stk/push";
+    const token = (process.env["PAYHERO_AUTH_TOKEN"] ?? "").trim();
+    const endpoint = process.env["PAYHERO_STK_ENDPOINT"] || "https://backend.payhero.co.ke/api/v2/payments";
     let resBody: Record<string, unknown> = {};
     let okRes = false;
     let httpStatus = 0;
     const controller = new AbortController();
     const timeout = setTimeout(() => controller.abort(), 15_000);
     try {
-      if (!key) throw new Error("SmartPay API key is not configured");
+      if (!token) throw new Error("PayHero API token is not configured");
       const res = await fetch(endpoint, {
         method: "POST",
-        headers: { "Content-Type": "application/json", Accept: "application/json", Authorization: `Bearer ${key}` },
+        headers: { "Content-Type": "application/json", Accept: "application/json", Authorization: `Basic ${token.replace(/^Basic\s+/i, "")}` },
         body: JSON.stringify(payload),
         signal: controller.signal,
       });
@@ -59,23 +72,24 @@ export const initiateStkPush = createServerFn({ method: "POST" })
       try { resBody = JSON.parse(text); } catch { resBody = { raw: text }; }
       okRes = res.ok && resBody["success"] !== false;
     } catch (e) {
-      resBody = { error: e instanceof Error && e.name === "AbortError" ? "SmartPay request timed out" : e instanceof Error ? e.message : String(e) };
+      resBody = { error: e instanceof Error && e.name === "AbortError" ? "PayHero request timed out" : e instanceof Error ? e.message : String(e) };
     } finally {
       clearTimeout(timeout);
     }
-    const d = (resBody["data"] as Record<string, unknown> | undefined) ?? resBody;
-    const checkout = (d["checkout_request_id"] ?? d["CheckoutRequestID"]) as string | undefined;
+    const d = (resBody["response"] as Record<string, unknown> | undefined) ?? (resBody["data"] as Record<string, unknown> | undefined) ?? resBody;
+    const checkout = (d["CheckoutRequestID"] ?? d["checkout_request_id"]) as string | undefined;
     const merchant = (d["merchant_request_id"] ?? d["MerchantRequestID"]) as string | undefined;
+    okRes = okRes && Boolean(checkout);
 
     if (!okRes) {
-      const reason = String(resBody["message"] ?? resBody["error"] ?? `SmartPay returned HTTP ${httpStatus || "error"}`);
+      const reason = String(d["message"] ?? resBody["message"] ?? resBody["error"] ?? `PayHero returned HTTP ${httpStatus || "error"}`);
       const errorCode = String(resBody["error_code"] ?? "");
       await db.from("stk_transactions").update({ status: "failed", failure_reason: reason, response_payload: resBody as never, updated_at: new Date().toISOString() }).eq("ref", ref);
       console.error("STK push failed", { httpStatus, response: resBody });
       return { success: false as const, error: errorCode === "LIMIT_REACHED"
         ? "M-Pesa prompts are temporarily unavailable because the payment service limit has been reached. Please use manual payment."
         : httpStatus === 401 || httpStatus === 403
-        ? "SmartPay rejected the payment connection. Please use manual payment while support checks it."
+        ? "PayHero rejected the payment connection. Please use manual payment while support checks it."
         : "Couldn't send the M-Pesa prompt. Please try again or use manual payment." };
     }
     await db.from("stk_transactions").update({ status: "pending", checkout_request_id: checkout ?? null, merchant_request_id: merchant ?? null, response_payload: resBody as never, updated_at: new Date().toISOString() }).eq("ref", ref);
@@ -95,7 +109,7 @@ export const checkPaymentStatus = createServerFn({ method: "POST" })
       await db.from("stk_transactions").update({ status: "failed", failure_reason: "timeout", updated_at: new Date().toISOString() }).eq("id", t.id).in("status", ["initiated", "pending"]);
       return { status: "failed", tier: t.tier, transaction_id: null, message: "The prompt expired. Please try again." };
     }
-    const msg: Record<string, string> = { success: "Payment received — you're active!", failed: t.failure_reason ?? "Payment failed.", cancelled: "Payment was cancelled.", pending: "Waiting for payment confirmation.", initiated: "STK prompt sent." };
+    const msg: Record<string, string> = { success: "Payment received. Your activation request is under review.", failed: t.failure_reason ?? "Payment failed.", cancelled: "Payment was cancelled.", pending: "Waiting for payment confirmation.", initiated: "STK prompt sent." };
     return { status: t.status, tier: t.tier, transaction_id: t.transaction_id, message: msg[t.status] ?? t.status };
   });
 
@@ -128,6 +142,51 @@ export const adminManualActivate = createServerFn({ method: "POST" })
     const { notifyActivation } = await import("./activation.server");
     await notifyActivation(db, r as Record<string, unknown>);
     return r as { ok: boolean };
+  });
+
+export const adminApprovePayment = createServerFn({ method: "POST" })
+  .middleware([requireSupabaseAuth])
+  .inputValidator((d) => z.object({ approvalId: z.string().uuid() }).parse(d))
+  .handler(async ({ data, context }) => {
+    await assertAdmin(context);
+    const { data: result, error } = await context.supabase.rpc("admin_approve_payment", { _approval_id: data.approvalId });
+    if (error) throw new Error(error.message);
+    const { supabaseAdmin: db } = await import("@/integrations/supabase/client.server");
+    const { notifyActivation } = await import("./activation.server");
+    const activation = result as Record<string, unknown>;
+    const { data: user } = await db.from("profiles").select("referral_code").eq("id", String(activation["user_id"])).single();
+    const { data: referrer } = activation["referrer_id"]
+      ? await db.from("profiles").select("phone,referral_code").eq("id", String(activation["referrer_id"])).single()
+      : { data: null };
+    await notifyActivation(db, {
+      ...activation,
+      code: user?.referral_code,
+      referrer_phone: referrer?.phone,
+      referrer_code: referrer?.referral_code,
+    });
+    return { ok: true };
+  });
+
+export const adminRejectPayment = createServerFn({ method: "POST" })
+  .middleware([requireSupabaseAuth])
+  .inputValidator((d) => z.object({ approvalId: z.string().uuid(), reason: z.string().trim().min(3).max(250) }).parse(d))
+  .handler(async ({ data, context }) => {
+    await assertAdmin(context);
+    const { supabaseAdmin: db } = await import("@/integrations/supabase/client.server");
+    const { data: approval, error: lookupError } = await db.from("payment_approval_requests").select("user_id,phone").eq("id", data.approvalId).single();
+    if (lookupError || !approval) throw new Error(lookupError?.message ?? "Payment approval request not found.");
+    const { error } = await context.supabase.rpc("admin_reject_payment", { _approval_id: data.approvalId, _rejection_reason: data.reason });
+    if (error) throw new Error(error.message);
+    const { data: user } = await db.from("profiles").select("name").eq("id", approval.user_id).single();
+    const { sendSms } = await import("./sms.server");
+    await sendSms(db, {
+      phone: approval.phone,
+      userId: approval.user_id,
+      trigger: "payment_rejected",
+      dedupeKey: `payment_rejected:${data.approvalId}`,
+      message: `${user?.name ?? "Hi"}, your activation request was rejected: ${data.reason}. Contact support for help with your payment.`,
+    });
+    return { ok: true };
   });
 
 export const adminDeleteUser = createServerFn({ method: "POST" })

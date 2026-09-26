@@ -95,6 +95,75 @@ export type Database = {
           },
         ]
       }
+      payment_approval_requests: {
+        Row: {
+          amount: number
+          approved_at: string | null
+          approved_by: string | null
+          created_at: string
+          expires_at: string
+          id: string
+          payment_reference: string
+          phone: string
+          rejection_reason: string | null
+          requested_at: string
+          status: Database["public"]["Enums"]["approval_request_status"]
+          stk_transaction_id: string
+          tier: Database["public"]["Enums"]["account_tier"]
+          updated_at: string
+          user_id: string
+        }
+        Insert: {
+          amount: number
+          approved_at?: string | null
+          approved_by?: string | null
+          created_at?: string
+          expires_at?: string
+          id?: string
+          payment_reference: string
+          phone: string
+          rejection_reason?: string | null
+          requested_at?: string
+          status?: Database["public"]["Enums"]["approval_request_status"]
+          stk_transaction_id: string
+          tier: Database["public"]["Enums"]["account_tier"]
+          updated_at?: string
+          user_id: string
+        }
+        Update: {
+          amount?: number
+          approved_at?: string | null
+          approved_by?: string | null
+          created_at?: string
+          expires_at?: string
+          id?: string
+          payment_reference?: string
+          phone?: string
+          rejection_reason?: string | null
+          requested_at?: string
+          status?: Database["public"]["Enums"]["approval_request_status"]
+          stk_transaction_id?: string
+          tier?: Database["public"]["Enums"]["account_tier"]
+          updated_at?: string
+          user_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "payment_approval_requests_stk_transaction_id_fkey"
+            columns: ["stk_transaction_id"]
+            isOneToOne: true
+            referencedRelation: "stk_transactions"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "payment_approval_requests_user_id_fkey"
+            columns: ["user_id"]
+            isOneToOne: false
+            referencedRelation: "profiles"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       profiles: {
         Row: {
           activated_at: string | null
@@ -451,11 +520,37 @@ export type Database = {
         }
         Returns: Json
       }
+      admin_approve_payment: { Args: { _approval_id: string }; Returns: Json }
+      admin_reject_payment: {
+        Args: { _approval_id: string; _rejection_reason?: string }
+        Returns: undefined
+      }
       admin_process_withdrawal: {
         Args: { _id: string; _paid: boolean }
         Returns: undefined
       }
       complete_task: { Args: { _task_id: string }; Returns: number }
+      create_payment_approval_request: {
+        Args: {
+          _amount: number
+          _payment_reference: string
+          _phone: string
+          _stk_transaction_id: string
+          _tier: Database["public"]["Enums"]["account_tier"]
+          _user_id: string
+        }
+        Returns: string
+      }
+      get_withdrawal_eligibility: {
+        Args: never
+        Returns: {
+          active_referrals: number
+          available_to_withdraw: number
+          balance: number
+          eligible: boolean
+          reason: string
+        }[]
+      }
       has_role: {
         Args: {
           _role: Database["public"]["Enums"]["app_role"]
@@ -485,11 +580,16 @@ export type Database = {
         Args: { _amount: number; _phone: string }
         Returns: string
       }
+      request_withdrawal_v2: {
+        Args: { _amount: number; _phone?: string | null }
+        Returns: string
+      }
     }
     Enums: {
       account_status: "pending" | "active" | "suspended"
       account_tier: "starter" | "standard" | "pro"
       app_role: "admin" | "customer"
+      approval_request_status: "pending" | "approved" | "rejected" | "expired"
     }
     CompositeTypes: {
       [_ in never]: never

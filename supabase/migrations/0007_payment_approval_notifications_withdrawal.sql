@@ -285,7 +285,7 @@ BEGIN
   RETURN approval_id;
 END $$;
 
-REVOKE EXECUTE ON FUNCTION public.create_payment_approval_request(uuid, uuid, text, numeric, public.account_tier, text) FROM anon;
+REVOKE ALL ON FUNCTION public.create_payment_approval_request(uuid, uuid, text, numeric, public.account_tier, text) FROM PUBLIC, anon, authenticated;
 GRANT EXECUTE ON FUNCTION public.create_payment_approval_request(uuid, uuid, text, numeric, public.account_tier, text) TO service_role;
 
 -- Admin approves payment: activate account, credit referrer, send SMS
@@ -390,6 +390,7 @@ BEGIN
     'user_id', user_profile.id,
     'name', user_profile.name,
     'phone', user_profile.phone,
+    'code', user_profile.referral_code,
     'tier', approval.tier,
     'amount', approval.amount
   );
@@ -398,6 +399,8 @@ BEGIN
     result := result || jsonb_build_object(
       'referrer_id', referrer.id,
       'referrer_name', referrer.name,
+      'referrer_phone', referrer.phone,
+      'referrer_code', referrer.referral_code,
       'commission', c
     );
   END IF;
@@ -405,8 +408,8 @@ BEGIN
   RETURN result;
 END $$;
 
-REVOKE EXECUTE ON FUNCTION public.admin_approve_payment(uuid) FROM anon, authenticated;
-GRANT EXECUTE ON FUNCTION public.admin_approve_payment(uuid) TO service_role;
+REVOKE ALL ON FUNCTION public.admin_approve_payment(uuid) FROM PUBLIC, anon;
+GRANT EXECUTE ON FUNCTION public.admin_approve_payment(uuid) TO authenticated, service_role;
 
 -- Admin rejects payment approval
 CREATE OR REPLACE FUNCTION public.admin_reject_payment(
@@ -475,8 +478,8 @@ BEGIN
   ));
 END $$;
 
-REVOKE EXECUTE ON FUNCTION public.admin_reject_payment(uuid, text) FROM anon, authenticated;
-GRANT EXECUTE ON FUNCTION public.admin_reject_payment(uuid, text) TO service_role;
+REVOKE ALL ON FUNCTION public.admin_reject_payment(uuid, text) FROM PUBLIC, anon;
+GRANT EXECUTE ON FUNCTION public.admin_reject_payment(uuid, text) TO authenticated, service_role;
 
 -- Enhanced withdrawal request with full validation (server-side only)
 CREATE OR REPLACE FUNCTION public.request_withdrawal_v2(

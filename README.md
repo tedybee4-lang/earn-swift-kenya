@@ -248,21 +248,19 @@ SYSTEM REQUIREMENTS
 
 - Add SMS provider status/error logs to the admin dashboard.ADDON: AUTOMATED M-PESA STK PUSH FOR SMARTEARN
 
-Paste ON TOP of the main SmartEarn build prompt. This REPLACES manual payment verification with automated STK Push, callback verification, instant activation, SMS and referral commissions. Keep all existing SmartEarn features.
+This payment integration uses automated PayHero STK Push. A provider-verified payment creates an admin approval request; account activation and referral commissions happen only after an admin approves it. Keep all existing SmartEarn features.
 
 PAYMENT GATEWAY
-Provider: SmartPay Wallet
-Endpoint: https://api.smartpaywallet.co.ke/v1/stk/push
-POST, JSON, Bearer SMARTPAY_API_KEY.
-Use:
-{"phone":"2547XXXXXXXX","amount":200,"account_reference":"SMARTERN-123","description":"SmartEarn Activation"}
-Save checkout_request_id and merchant_request_id. Never expose API key. SmartPay supports real-time webhooks.
+Provider: PayHero
+Endpoint: https://backend.payhero.co.ke/api/v2/payments
+POST, JSON, Basic PAYHERO_AUTH_TOKEN. Set PAYHERO_CHANNEL_ID to the registered M-Pesa channel.
+Use amount, phone_number, channel_id, provider: "m-pesa", external_reference, customer_name and callback_url. Store the response including the gateway reference and checkout ID. Never expose the token.
 
 CALLBACK:
-https://YOUR-PROJECT.supabase.co/functions/v1/mpesa-callback
+https://YOUR-DOMAIN/api/public/mpesa-callback
 
 PAYMENT FLOW
-User selects Starter=KSh200, Standard=KSh350, Pro=KSh550. Phone is prefilled and normalized. Frontend calls initiate-stk-push; backend sends STK; user enters PIN; SmartPay callback is verified; user becomes ACTIVE automatically; SMS is sent; referrer commission is credited and SMS sent. No admin action for verified STK payments.
+User selects Starter=KSh200, Standard=KSh350, Pro=KSh550. Phone is prefilled and normalized. The server sends the PayHero STK request; the user enters their PIN; the callback is cross-checked against PayHero's authenticated transaction-status API and matched against reference, amount, phone and M-Pesa receipt. A payment approval request is then created for admin review. Only admin approval activates the account and credits any referral commission.
 
 DATABASE
 Add to payments:
@@ -273,38 +271,26 @@ id uuid PK, user_id FK users, phone, amount, tier, unique ref, checkout_request_
 Index ref, checkout_request_id and status.
 
 initiate-stk-push
-File: supabase/functions/initiate-stk-push/index.ts
+File: src/lib/payments.functions.ts
 
-Authenticate JWT and load user. Reject active users. Map tier to amount. Generate:
+Authenticate the user and reject active accounts. Map tier to amount. Generate:
 SMARTERN-{userId.slice(0,8)}-{Date.now()}
-Validate phone. Save transaction as initiated. Call SmartPay with phone, amount, account_reference=ref and description. Save complete request/response and IDs. Return {success:true,ref}. Send:
+Validate phone. Save the transaction as initiated. Call PayHero with phone_number, amount, channel_id, provider, external_reference and callback_url. Save the request, response and gateway IDs. Return {success:true,ref}. Send:
 "📲 {name}, we've sent an M-Pesa prompt to {phone}. Enter your PIN to activate. Ref: {ref}"
-On gateway failure mark failed. Prevent duplicate attempts. Enforce SmartPay's 3 pushes/phone/5 minutes limit.
+On gateway failure mark failed. Prevent duplicate attempts and limit repeated prompts to the same phone.
 
 mpesa-callback
-File: supabase/functions/mpesa-callback/index.ts
+File: src/routes/api/public/mpesa-callback.ts
 
-Receive SmartPay webhook. Parse actual webhook fields: CheckoutRequestID, ResultCode, ResultDesc and CallbackMetadata. Locate transaction by checkout/reference. Validate reference, transaction ID, phone and EXACT amount. Store full callback.
+Receive the PayHero callback. Parse response fields including CheckoutRequestID, ExternalReference, ResultCode, Amount, MpesaReceiptNumber and Phone. Locate by checkout/reference; validate reference, transaction ID, phone and exact amount. Confirm success with PayHero's authenticated transaction-status API and store the full callback.
 
 If ResultCode=0:
 
-Idempotently mark payment/STK success.
-
-Activate user, set tier and activated_at.
-
-Send: "✅ {name}, payment of KSh {amount} received! You're ACTIVE. Referral link: smartearn.co.ke/ref/{code} Reply STOP to unsubscribe"
-
-If referred_by: Starter commission KSh80, Standard KSh150, Pro KSh250.
-
-Insert commission and activity.
-
-SMS referrer: "💰 {name}, you earned KSh {commission} from {referred_name}! Keep sharing → smartearn.co.ke/ref/{code}"
-
-Log admin audit.
+Create a payment approval request. Admin reviews the request in the Payments tab. Approval activates the user and processes the referral commission; activation and referrer SMS messages are sent after approval.
 
 If failed/cancelled, update status and send the appropriate failure/cancellation SMS.
 
-Make callback processing fully idempotent: duplicate callbacks must never activate or credit twice. Verify webhook authenticity where supported and reject unknown/mismatched transactions. SmartPay retries failed webhook deliveries, so return HTTP 200 promptly after safely processing/recording.
+Make callback processing idempotent: duplicate callbacks must never create multiple approval requests or activate/credit twice. Reject unknown or mismatched transactions. Return a retryable error if PayHero status verification or database processing is unavailable.
 
 /dashboard/activate
 Mobile-first page:
@@ -316,16 +302,17 @@ Pro KSh550 → 4x
 M-Pesa Number [prefilled]
 [ PAY KSH {amount} → M-PESA ]
 
-After click: "Sending STK Push..." Poll check-payment-status every 3 seconds. Success → /dashboard?activated=1. Failure → retry. After 2 minutes show "Did you receive the prompt?" Prevent duplicate requests.
+After click: "Sending STK Push..." Poll check-payment-status every 3 seconds. Verified payment → show that the activation request is under review, then return to /dashboard. Failure → retry. After 2 minutes show "Did you receive the prompt?" Prevent duplicate requests.
 
 check-payment-status
 File: supabase/functions/check-payment-status/index.ts
 Input {ref}. Return status,tier,transaction_id,message. If still initiated after 5 minutes mark failed. Polling is only fallback; verified webhook is primary.
 
 SUPABASE SECRETS
-SMARTPAY_API_KEY
-SMARTPAY_STK_ENDPOINT=https://api.smartpaywallet.co.ke/v1/stk/push
-SMARTPAY_CALLBACK_URL=https://YOUR-PROJECT.supabase.co/functions/v1/mpesa-callback
+PAYHERO_AUTH_TOKEN
+PAYHERO_CHANNEL_ID
+PAYHERO_STK_ENDPOINT=https://backend.payhero.co.ke/api/v2/payments
+PAYHERO_CALLBACK_URL=https://YOUR-DOMAIN/api/public/mpesa-callback
 SMS_API_TOKEN
 SMS_SENDER_ID=TOPSPEED
 SMS_ENDPOINT=https://sms.ispledger.com/sms/send
@@ -359,10 +346,10 @@ BUILD ORDER
 Database → initiate-stk-push → callback → status check → secrets → callback registration → activation UI → SMS → admin page → manual fallback → small-value real test → production.
 
 TEST
-Test successful payment/activation, user SMS, commission/SMS, cancellation, failure, duplicate ref, duplicate callback, invalid callback, wrong amount, unknown ref, idempotency, polling fallback, manual mode, admin visibility, CSV and retry limits.
+Test successful payment, approval request, admin approval/activation, user and referrer SMS, rejection, cancellation, failure, duplicate callback, invalid callback, wrong amount, unknown ref, idempotency, polling fallback, manual mode, admin visibility, CSV and retry limits.
 
 IMPORTANT
-Verify the live SmartPay API before deployment and adapt any field differences. Current SmartPay documentation shows /v1/stk/push, account_reference, description, checkout_request_id, webhook callbacks and per-phone rate limiting.
+Verify the live PayHero API and complete a low-value end-to-end test before production. The callback is checked against PayHero's transaction-status endpoint before a payment is recorded.
 
 Do not remove existing SmartEarn authentication, dashboard, earnings, referrals or other functionality. STK Push is the primary automated activation method; Till 5441898 remains the backup.
 
