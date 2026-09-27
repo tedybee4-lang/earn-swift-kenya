@@ -1,4 +1,3 @@
-import { createHmac, randomInt } from "node:crypto";
 import { SITE_URL } from "@/lib/site";
 import { normalizePhone } from "@/lib/phone";
 import { createFileRoute } from "@tanstack/react-router";
@@ -72,32 +71,6 @@ export const Route = createFileRoute("/api/public/mpesa-callback")({
             console.warn("PayHero callback does not match verified transaction status", { ref: t.ref, status: verifiedPayment["status"] });
             return Response.json({ ok: false, reason: "verification_mismatch" }, { status: 503 });
           }
-          const { data: existingCode, error: codeLookupError } = await db.from("payment_activation_codes")
-            .select("id").eq("stk_transaction_id", t.id).maybeSingle();
-          if (codeLookupError) {
-            console.error("Could not check existing payment activation code", { ref: t.ref, error: codeLookupError.message });
-            return Response.json({ ok: false }, { status: 500 });
-          }
-
-          let activationCode: string | null = null;
-          if (!existingCode) {
-            const pepper = process.env["SUPABASE_SERVICE_ROLE_KEY"] ?? "";
-            if (!pepper) return Response.json({ ok: false }, { status: 503 });
-            activationCode = String(randomInt(100000, 1000000));
-            const codeHash = createHmac("sha256", pepper).update(`${t.id}:${activationCode}`).digest("hex");
-            const { error: codeInsertError } = await db.from("payment_activation_codes").insert({
-              user_id: t.user_id,
-              stk_transaction_id: t.id,
-              code_hash: codeHash,
-              expires_at: new Date(Date.now() + 15 * 60 * 1000).toISOString(),
-            });
-            if (codeInsertError && codeInsertError.code !== "23505") {
-              console.error("Could not create payment activation code", { ref: t.ref, error: codeInsertError.message });
-              return Response.json({ ok: false }, { status: 500 });
-            }
-            if (codeInsertError) activationCode = null;
-          }
-
           const { error: updateError } = await db.from("stk_transactions").update({
             status: "success",
             transaction_id: p.txid,
@@ -108,20 +81,9 @@ export const Route = createFileRoute("/api/public/mpesa-callback")({
             console.error("Could not record verified PayHero payment", { ref: t.ref, error: updateError.message });
             return Response.json({ ok: false }, { status: 500 });
           }
-
-          if (activationCode) {
-            const { sendSms } = await import("@/lib/sms.server");
-            const { data: user } = await db.from("profiles").select("name").eq("id", t.user_id).single();
-            const sms = await sendSms(db, {
-              phone: t.phone,
-              userId: t.user_id,
-              trigger: "payment_activation_code",
-              dedupeKey: `payment_activation_code:${t.id}`,
-              message: `${user?.name ?? "Hello"}, your KSh ${t.amount} payment is confirmed. Your activation code is ${activationCode}. Enter it on the activation page within 15 minutes to activate your ${t.tier} plan. Do not share this code.`,
-              logMessage: "Payment activation code sent by SMS.",
-            });
-            if (!sms.ok) console.error("Payment activation code SMS failed", { ref: t.ref, status: sms.status, response: sms.response });
-          }
+          const { issuePaymentActivationCode } = await import("@/lib/payment-activation-code.server");
+          const codeResult = await issuePaymentActivationCode(db, t);
+          if (!codeResult.ok) console.error("Payment activation code was not sent", { ref: t.ref, reason: codeResult.reason, status: "status" in codeResult ? codeResult.status : undefined });
           return Response.json({ ok: true });
         }
 

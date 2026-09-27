@@ -7,7 +7,6 @@ const FOOTER = "Reply STOP to unsubscribe";
 export function stripEmoji(s: string): string {
   return s
     .replace(/[→➡]/g, "->").replace(/[—–]/g, "-").replace(/…/g, "...")
-    .replace(/[\u{1F000}-\u{1FAFF}\u{2600}-\u{27BF}\u{2B00}-\u{2BFF}\u{FE0F}\u{200D}\u{20E3}]/gu, "")
     .replace(/[^\x20-\x7E\n]/g, "")
     .replace(/ {2,}/g, " ").trim();
 }

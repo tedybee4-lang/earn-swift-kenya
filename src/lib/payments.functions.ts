@@ -120,6 +120,49 @@ export const checkPaymentStatus = createServerFn({ method: "POST" })
     const { supabaseAdmin: db } = await import("@/integrations/supabase/client.server");
     const { data: t } = await db.from("stk_transactions").select("*").eq("ref", data.ref).eq("user_id", context.userId).single();
     if (!t) return { status: "unknown", tier: null, transaction_id: null, message: "Transaction not found." };
+    if (["initiated", "pending"].includes(t.status) && Date.now() - Date.parse(t.updated_at || t.created_at) >= 20000) {
+      const { error: throttleError } = await db.from("stk_transactions")
+        .update({ updated_at: new Date().toISOString() }).eq("id", t.id).in("status", ["initiated", "pending"]);
+      if (!throttleError) {
+        const responsePayload = (t.response_payload as Record<string, unknown> | null) ?? {};
+        const gatewayResponse = (responsePayload["response"] as Record<string, unknown> | undefined) ?? (responsePayload["data"] as Record<string, unknown> | undefined) ?? responsePayload;
+        const gatewayReference = gatewayResponse["reference"];
+        const token = (process.env["PAYHERO_AUTH_TOKEN"] ?? "").trim().replace(/^Basic\s+/i, "");
+        if (typeof gatewayReference === "string" && gatewayReference && token) {
+          try {
+            const response = await fetch(`https://backend.payhero.co.ke/api/v2/transaction-status?reference=${encodeURIComponent(gatewayReference)}`, {
+              headers: { Accept: "application/json", Authorization: `Basic ${token}` },
+              signal: AbortSignal.timeout(10000),
+            });
+            if (response.ok) {
+              const body = await response.json() as Record<string, unknown>;
+              const verified = (body["data"] as Record<string, unknown> | undefined) ?? (body["response"] as Record<string, unknown> | undefined) ?? body;
+              const gatewayStatus = String(verified["status"] ?? "").toUpperCase();
+              if (gatewayStatus === "SUCCESS") {
+                const transactionId = verified["third_party_reference"] ?? verified["provider_reference"];
+                const { error: updateError } = await db.from("stk_transactions").update({
+                  status: "success",
+                  transaction_id: typeof transactionId === "string" ? transactionId : t.transaction_id,
+                  updated_at: new Date().toISOString(),
+                }).eq("id", t.id).in("status", ["initiated", "pending"]);
+                if (!updateError) {
+                  const { issuePaymentActivationCode } = await import("./payment-activation-code.server");
+                  const result = await issuePaymentActivationCode(db, t);
+                  if (!result.ok) console.error("Recovered payment activation code was not sent", { ref: t.ref, reason: result.reason });
+                  return { status: "success", tier: t.tier, transaction_id: typeof transactionId === "string" ? transactionId : t.transaction_id, message: "Payment confirmed. Enter the activation code sent to your phone." };
+                }
+              } else if (gatewayStatus === "FAILED") {
+                await db.from("stk_transactions").update({ status: "failed", failure_reason: "PayHero confirmed payment failure", updated_at: new Date().toISOString() })
+                  .eq("id", t.id).in("status", ["initiated", "pending"]);
+                return { status: "failed", tier: t.tier, transaction_id: null, message: "PayHero confirmed that this payment failed. Please try again." };
+              }
+            }
+          } catch (error) {
+            console.error("PayHero payment recovery check failed", { ref: t.ref, error: error instanceof Error ? error.message : String(error) });
+          }
+        }
+      }
+    }
     if (["initiated", "pending"].includes(t.status) && Date.now() - Date.parse(t.created_at) > 300000) {
       await db.from("stk_transactions").update({ status: "failed", failure_reason: "timeout", updated_at: new Date().toISOString() }).eq("id", t.id).in("status", ["initiated", "pending"]);
       return { status: "failed", tier: t.tier, transaction_id: null, message: "The prompt expired. Please try again." };
