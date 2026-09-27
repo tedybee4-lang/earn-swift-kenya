@@ -248,7 +248,7 @@ SYSTEM REQUIREMENTS
 
 - Add SMS provider status/error logs to the admin dashboard.ADDON: AUTOMATED M-PESA STK PUSH FOR SMARTEARN
 
-This payment integration uses automated PayHero STK Push. Once PayHero confirms payment, the callback verifies the transaction and activates the account automatically, including any referral commission. Users complete 3 free tasks before activation payment.
+This payment integration uses PayHero STK Push and SMS activation codes. After PayHero verifies payment, the user enters a six-digit code sent by SMS; only then is the paid tier activated and any referral commission credited. Users complete 3 free tasks before activation payment.
 
 PAYMENT GATEWAY
 Provider: PayHero
@@ -260,7 +260,7 @@ CALLBACK:
 https://YOUR-DOMAIN/api/public/mpesa-callback
 
 PAYMENT FLOW
-Users complete 3 free tasks before choosing Starter=KSh200, Standard=KSh350 or Pro=KSh550. The server sends the PayHero STK request; the user enters their PIN; the callback is cross-checked against PayHero's authenticated transaction-status API and matched against reference, amount, phone and M-Pesa receipt. A verified payment automatically activates the account and credits any referral commission.
+Users complete 3 free tasks before choosing Starter=KSh200, Standard=KSh350 or Pro=KSh550. After PayHero confirms payment, the server sends a six-digit activation code by SMS. The code expires after 15 minutes, allows five guesses, and can be resent up to three times with a cooldown. The signed-in user must enter the code to activate the tier stored on the verified payment.
 
 DATABASE
 Add to payments:
@@ -286,7 +286,9 @@ Receive the PayHero callback. Parse response fields including CheckoutRequestID,
 
 If ResultCode=0:
 
-Call the atomic `activate_stk` function. This activates the user, sets the paid tier, applies any referral commission exactly once, and returns the activation data used for SMS notifications.
+Create a random six-digit activation code, store only its HMAC hash with a 15-minute expiry and send the code to the user's phone by SMS. Do not activate the account in the callback.
+
+The activation page asks the signed-in user to enter the SMS code. The user-bound `activate_payment_with_code` function verifies payment ownership, code hash, expiry and attempt count atomically, then activates the tier on the confirmed payment and applies any referral commission exactly once.
 
 If failed/cancelled, update status and send the appropriate failure/cancellation SMS.
 
@@ -302,7 +304,7 @@ Pro KSh550 → 4x
 M-Pesa Number [prefilled]
 [ PAY KSH {amount} → M-PESA ]
 
-After click, show a waiting screen asking the user to approve the prompt on their phone while polling payment status every 3 seconds. Verified payment → show a success screen confirming automatic account activation, then return to /dashboard. Failure → retry. Prevent duplicate requests.
+After click, show a waiting screen asking the user to approve the prompt on their phone while polling payment status every 3 seconds. Verified payment → show the 1-15 minute activation message and SMS code form. A valid code shows the success screen and returns to /dashboard. Failure → retry. Prevent duplicate requests.
 
 check-payment-status
 File: supabase/functions/check-payment-status/index.ts
@@ -346,7 +348,7 @@ BUILD ORDER
 Database → initiate-stk-push → callback → status check → secrets → callback registration → activation UI → SMS → admin page → manual fallback → small-value real test → production.
 
 TEST
-Test the 3-free-task gate, successful payment and automatic activation, user/referrer SMS, cancellation, failure, duplicate callback, invalid callback, wrong amount, unknown ref, idempotency, polling fallback, manual mode, admin visibility, CSV and retry limits.
+Test the 3-free-task gate, successful payment and code SMS, valid/invalid/expired code, resend limits, code-based activation, user/referrer SMS, cancellation, failure, duplicate callback, wrong amount, unknown ref, idempotency, polling fallback, manual mode and admin visibility.
 
 IMPORTANT
 Verify the live PayHero API and complete a low-value end-to-end test before production. The callback is checked against PayHero's transaction-status endpoint before a payment is recorded.

@@ -10,7 +10,7 @@
 ## Phase 2 — payments (connected, needs a small real test)
 - [x] stk_transactions + payments tables, initiate STK push, callback, status polling
 - [x] PayHero STK Push request, callback validation, and authenticated transaction-status verification
-- [x] Automatic activation after verified PayHero payment, including referral commission and SMS
+- [x] SMS activation code after verified PayHero payment; account activates when user enters the code
 - [x] Three free tasks before payment; four tasks daily after activation
 - [x] Responsive admin dashboard navigation and overview refresh
 - [x] /dashboard/activate page + manual Till 5441898 fallback
@@ -34,8 +34,8 @@
 - Add sponsor-provided task links and instructions through Admin before publishing tasks
 - Support contact details for Help page
 - Register the PayHero callback URL in the payment channel settings: https://smarttearnn.vercel.app/api/public/mpesa-callback
-- Run migration 0009 in Supabase and complete a low-value end-to-end test
+- Run migrations 0009 and 0010 in Supabase and complete a low-value end-to-end test
 
 ## Migration to own Supabase (2026-09-24)
 - User Supabase: exisbpugnwmhclnjpqru.supabase.co; Vercel: smarttearnn.vercel.app; values wired into .env.example + DEPLOY.md
-- User must still: add SUPABASE_SERVICE_ROLE_KEY + PAYHERO_AUTH_TOKEN + PAYHERO_CHANNEL_ID + SMS_API_TOKEN in Vercel; register the PayHero callback; apply migrations 0007, 0008 and 0009 if needed; turn off Confirm email; create admin via SQL; redeploy; test a small payment and SMS
+- User must still: add SUPABASE_SERVICE_ROLE_KEY + PAYHERO_AUTH_TOKEN + PAYHERO_CHANNEL_ID + SMS_API_TOKEN in Vercel; register the PayHero callback; apply migrations 0007, 0008, 0009 and 0010 if needed; turn off Confirm email; create admin via SQL; redeploy; test a small payment and SMS

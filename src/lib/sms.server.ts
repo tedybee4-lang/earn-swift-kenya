@@ -19,6 +19,7 @@ export type SmsInput = {
   userId?: string | null;
   dedupeKey?: string;
   marketing?: boolean;
+  logMessage?: string;
 };
 
 export type SmsResult = { ok: boolean; status: string; httpCode: number | null; response: string; logId?: string; skipped?: string };
@@ -36,10 +37,11 @@ export async function sendSms(db: SupabaseClient<any>, input: SmsInput): Promise
 
   const clean = stripEmoji(input.message);
   const text = clean.includes(FOOTER) ? clean : `${clean.trim()} ${FOOTER}`;
+  const loggedText = input.logMessage ? stripEmoji(input.logMessage) : text;
 
   const { data: log, error } = await db
     .from("sms_logs")
-    .insert({ phone, message: text, trigger_type: input.trigger, user_id: input.userId ?? null, dedupe_key: input.dedupeKey ?? null })
+    .insert({ phone, message: loggedText, trigger_type: input.trigger, user_id: input.userId ?? null, dedupe_key: input.dedupeKey ?? null })
     .select("id")
     .single();
   if (error) {

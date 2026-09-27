@@ -62,6 +62,7 @@ function Dashboard() {
   const wds = useQuery({ queryKey: ["wds", user.id], queryFn: async () => (await supabase.from("withdrawals").select("*").eq("user_id", user.id).order("created_at", { ascending: false }).limit(10)).data ?? [] });
   const [open, setOpen] = useState<null | { id: string; title: string; url: string | null; instructions: string | null; mins: number }>(null);
   const [left, setLeft] = useState(0);
+  const [taskOpened, setTaskOpened] = useState(false);
   useEffect(() => { if (left <= 0) return; const t = setTimeout(() => setLeft(left - 1), 1000); return () => clearTimeout(t); }, [left]);
   const [wAmt, setWAmt] = useState("");
   const [wMsg, setWMsg] = useState<{ ok: boolean; text: string } | null>(null);
@@ -87,7 +88,11 @@ function Dashboard() {
   async function doTask(id: string) {
     setMsg(null);
     const { data, error } = await supabase.rpc("complete_task", { _task_id: id });
-    setMsg({ id, ok: !error, text: error ? error.message : `Done! ${ksh(data as number)} added to your balance.` });
+    if (error) {
+      setMsg({ id, ok: false, text: error.message });
+      return;
+    }
+    setMsg({ id, ok: true, text: `Done! ${ksh(data as number)} added to your balance.` });
     setOpen(null);
     qc.invalidateQueries();
   }
@@ -151,7 +156,7 @@ function Dashboard() {
                   {msg?.id === t.id && <p className={`mt-1 text-xs ${msg.ok ? "text-success" : "text-destructive"}`}>{msg.text}</p>}
                 </div>
                 <div className="flex shrink-0 flex-col gap-2">
-                  <button disabled={p?.status !== "active" && freeTasksRemaining === 0} onClick={() => { setOpen({ id: t.id, title: t.title, url: t.action_url, instructions: t.instructions ?? null, mins: t.est_minutes }); setLeft(Math.min(60, Math.max(15, t.est_minutes * 60))); }} className="btn-primary px-3 py-1 text-xs">{p?.status !== "active" && freeTasksRemaining === 0 ? "Activate" : "Start"}</button>
+                  <button disabled={p?.status !== "active" && freeTasksRemaining === 0} onClick={() => { setOpen({ id: t.id, title: t.title, url: t.action_url, instructions: t.instructions ?? null, mins: t.est_minutes }); setLeft(0); setTaskOpened(false); }} className="btn-primary px-3 py-1 text-xs">{p?.status !== "active" && freeTasksRemaining === 0 ? "Activate" : "Start"}</button>
                 </div>
               </div>
             ))}
@@ -270,18 +275,27 @@ function Dashboard() {
         </section>
       </main>
       {open && (
-        <div className="fixed inset-0 z-50 flex flex-col bg-background">
+        <div className="fixed inset-0 z-50 flex flex-col overflow-y-auto bg-background">
           <div className="flex items-center justify-between border-b p-3">
             <p className="truncate font-semibold">{open.title}</p>
             <button onClick={() => setOpen(null)} className="btn-ghost px-3 py-1">Close</button>
           </div>
-          {open.url ? <iframe src={open.url} title={open.title} className="w-full flex-1" sandbox="allow-scripts allow-same-origin allow-forms allow-popups" /> : <div className="flex-1" />}
-          <div className="space-y-2 border-t p-4">
-            {open.instructions && <p className="text-xs text-muted-foreground">{open.instructions}</p>}
-            {open.url && <a href={open.url} target="_blank" rel="noopener noreferrer" className="text-xs text-primary underline">Page not showing? Open it here <ExternalLink className="inline h-3 w-3" /></a>}
+          <main className="mx-auto flex w-full max-w-xl flex-1 flex-col gap-5 px-4 py-6">
+            <section className="card space-y-4 p-5">
+              <div><p className="font-semibold">Task instructions</p><p className="mt-2 whitespace-pre-wrap text-sm text-muted-foreground">{open.instructions || "Open the task destination, complete the requested activity, then return here."}</p></div>
+              {open.url ? (
+                <div className="space-y-2 border-t pt-4">
+                  <p className="text-xs text-muted-foreground">The partner page opens in a new tab because some sites block in-app previews.</p>
+                  <a href={open.url} target="_blank" rel="noopener noreferrer" onClick={() => { if (!taskOpened) { setTaskOpened(true); setLeft(Math.min(60, Math.max(15, open.mins * 60))); } }} className="btn-primary w-full">
+                    <ExternalLink className="h-4 w-4" /> Open task in new tab
+                  </a>
+                </div>
+              ) : <p className="rounded-lg bg-warning/10 p-3 text-sm text-warning">This task has no destination link. Please contact support.</p>}
+            </section>
+            {taskOpened && left > 0 && <p className="text-center text-sm text-muted-foreground">Complete the activity in the other tab, then return here. The completion button unlocks in {left}s.</p>}
             {msg?.id === open.id && !msg.ok && <p className="text-sm text-destructive">{msg.text}</p>}
-            <button onClick={() => doTask(open.id)} disabled={left > 0} className="btn-primary w-full">{left > 0 ? `Complete in ${left}s` : "Complete task"}</button>
-          </div>
+            <button onClick={() => doTask(open.id)} disabled={!taskOpened || left > 0} className="btn-primary mt-auto w-full">{!taskOpened ? "Open the task to continue" : left > 0 ? `Complete in ${left}s` : "Complete task"}</button>
+          </main>
         </div>
       )}
     </div>

@@ -164,6 +164,60 @@ export type Database = {
           },
         ]
       }
+      payment_activation_codes: {
+        Row: {
+          attempts: number
+          code_hash: string
+          created_at: string
+          expires_at: string
+          id: string
+          last_sent_at: string
+          resend_count: number
+          stk_transaction_id: string
+          user_id: string
+          verified_at: string | null
+        }
+        Insert: {
+          attempts?: number
+          code_hash: string
+          created_at?: string
+          expires_at: string
+          id?: string
+          last_sent_at?: string
+          resend_count?: number
+          stk_transaction_id: string
+          user_id: string
+          verified_at?: string | null
+        }
+        Update: {
+          attempts?: number
+          code_hash?: string
+          created_at?: string
+          expires_at?: string
+          id?: string
+          last_sent_at?: string
+          resend_count?: number
+          stk_transaction_id?: string
+          user_id?: string
+          verified_at?: string | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "payment_activation_codes_stk_transaction_id_fkey"
+            columns: ["stk_transaction_id"]
+            isOneToOne: true
+            referencedRelation: "stk_transactions"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "payment_activation_codes_user_id_fkey"
+            columns: ["user_id"]
+            isOneToOne: false
+            referencedRelation: "profiles"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       profiles: {
         Row: {
           activated_at: string | null
@@ -520,6 +574,10 @@ export type Database = {
         }
         Returns: Json
       }
+      activate_payment_with_code: {
+        Args: { _code_hash: string; _ref: string }
+        Returns: Json
+      }
       admin_approve_payment: { Args: { _approval_id: string }; Returns: Json }
       admin_reject_payment: {
         Args: { _approval_id: string; _rejection_reason?: string }
@@ -575,6 +633,10 @@ export type Database = {
           kind: string
           who: string
         }[]
+      }
+      refresh_payment_activation_code: {
+        Args: { _code_hash: string; _expires_at: string; _ref: string; _user_id: string }
+        Returns: Json
       }
       request_withdrawal: {
         Args: { _amount: number; _phone: string }

@@ -124,8 +124,82 @@ export const checkPaymentStatus = createServerFn({ method: "POST" })
       await db.from("stk_transactions").update({ status: "failed", failure_reason: "timeout", updated_at: new Date().toISOString() }).eq("id", t.id).in("status", ["initiated", "pending"]);
       return { status: "failed", tier: t.tier, transaction_id: null, message: "The prompt expired. Please try again." };
     }
-    const msg: Record<string, string> = { success: "Payment confirmed. Your account is approved and active.", failed: t.failure_reason ?? "Payment failed.", cancelled: "Payment was cancelled.", pending: "Waiting for payment confirmation.", initiated: "STK prompt sent." };
+    const msg: Record<string, string> = { success: "Payment confirmed. Enter the activation code sent to your phone.", failed: t.failure_reason ?? "Payment failed.", cancelled: "Payment was cancelled.", pending: "Waiting for payment confirmation.", initiated: "STK prompt sent." };
     return { status: t.status, tier: t.tier, transaction_id: t.transaction_id, message: msg[t.status] ?? t.status };
+  });
+
+export const activatePaymentWithCode = createServerFn({ method: "POST" })
+  .middleware([requireSupabaseAuth])
+  .inputValidator((d) => z.object({ ref: z.string().min(5).max(80), code: z.string().regex(/^\d{6}$/) }).parse(d))
+  .handler(async ({ data, context }) => {
+    const { data: payment, error: paymentError } = await context.supabase.from("stk_transactions")
+      .select("id,status").eq("ref", data.ref).eq("user_id", context.userId).single();
+    if (paymentError || !payment || payment.status !== "success") return { success: false as const, error: "This payment is not confirmed yet." };
+    const pepper = process.env["SUPABASE_SERVICE_ROLE_KEY"];
+    if (!pepper) return { success: false as const, error: "Activation is temporarily unavailable. Please try again." };
+    const { createHmac } = await import("node:crypto");
+    const codeHash = createHmac("sha256", pepper).update(`${payment.id}:${data.code}`).digest("hex");
+    const { data: result, error } = await context.supabase.rpc("activate_payment_with_code", { _ref: data.ref, _code_hash: codeHash });
+    if (error) throw new Error(error.message);
+    const activation = result as Record<string, unknown>;
+    if (activation["ok"] !== true) {
+      const reason = String(activation["reason"] ?? "invalid_code");
+      const message = reason === "code_expired" ? "That code expired. Request a new code by SMS."
+        : reason === "too_many_attempts" ? "Too many incorrect attempts. Request a new code by SMS."
+        : reason === "account_suspended" ? "This account is suspended. Please contact support."
+        : reason === "payment_not_confirmed" ? "Payment is not confirmed yet. Keep this page open and retry shortly."
+        : "That code is incorrect. Check the SMS and try again.";
+      return { success: false as const, error: message };
+    }
+    const { supabaseAdmin: db } = await import("@/integrations/supabase/client.server");
+    const { notifyActivation } = await import("./activation.server");
+    const { data: user } = await db.from("profiles").select("referral_code").eq("id", String(activation["user_id"] ?? context.userId)).single();
+    const { data: referrer } = activation["referrer_id"]
+      ? await db.from("profiles").select("phone,referral_code").eq("id", String(activation["referrer_id"])).single()
+      : { data: null };
+    await notifyActivation(db, { ...activation, code: user?.referral_code, referrer_phone: referrer?.phone, referrer_code: referrer?.referral_code });
+    return { success: true as const };
+  });
+
+export const resendPaymentActivationCode = createServerFn({ method: "POST" })
+  .middleware([requireSupabaseAuth])
+  .inputValidator((d) => z.object({ ref: z.string().min(5).max(80) }).parse(d))
+  .handler(async ({ data, context }) => {
+    const { data: payment, error: paymentError } = await context.supabase.from("stk_transactions")
+      .select("id,status,phone,amount,tier").eq("ref", data.ref).eq("user_id", context.userId).single();
+    if (paymentError || !payment || payment.status !== "success") return { success: false as const, error: "Payment is not confirmed yet." };
+    const { data: profile } = await context.supabase.from("profiles").select("name,status").eq("id", context.userId).single();
+    if (profile?.status === "active") return { success: false as const, error: "This account is already active." };
+    const pepper = process.env["SUPABASE_SERVICE_ROLE_KEY"];
+    if (!pepper) return { success: false as const, error: "Code delivery is temporarily unavailable." };
+    const { randomInt, createHmac } = await import("node:crypto");
+    const code = String(randomInt(100000, 1000000));
+    const codeHash = createHmac("sha256", pepper).update(`${payment.id}:${code}`).digest("hex");
+    const { supabaseAdmin: db } = await import("@/integrations/supabase/client.server");
+    const { data: refreshResult, error: refreshError } = await db.rpc("refresh_payment_activation_code", {
+      _user_id: context.userId,
+      _ref: data.ref,
+      _code_hash: codeHash,
+      _expires_at: new Date(Date.now() + 15 * 60 * 1000).toISOString(),
+    });
+    if (refreshError) throw new Error(refreshError.message);
+    const refresh = refreshResult as Record<string, unknown>;
+    if (refresh["ok"] !== true) {
+      const reason = String(refresh["reason"] ?? "unavailable");
+      return { success: false as const, error: reason === "wait_before_resend" ? "Wait 30 seconds before requesting another code." : reason === "resend_limit" ? "You have used all code resend attempts. Please contact support." : "A new code cannot be sent for this payment." };
+    }
+    const { sendSms } = await import("./sms.server");
+    const sms = await sendSms(db, {
+      phone: payment.phone,
+      userId: context.userId,
+      trigger: "payment_activation_code",
+      dedupeKey: `payment_activation_code:${payment.id}:${String(refresh["resend_count"] ?? 1)}`,
+      message: `${profile?.name ?? "Hello"}, your new activation code is ${code}. Enter it within 15 minutes to activate your ${payment.tier} plan. Do not share this code.`,
+      logMessage: "Replacement payment activation code sent by SMS.",
+    });
+    return sms.ok
+      ? { success: true as const, message: "A new activation code was sent by SMS." }
+      : { success: false as const, error: "We could not send the SMS right now. Wait 30 seconds and try again." };
   });
 
 async function assertAdmin(ctx: { supabase: { rpc: (f: "has_role", a: { _user_id: string; _role: "admin" }) => PromiseLike<{ data: boolean | null }> }; userId: string }) {
